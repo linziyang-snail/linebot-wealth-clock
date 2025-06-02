@@ -1,19 +1,24 @@
 {
   "name": "linebot-wealth-clock",
   "version": "1.0.0",
+  "description": "A LINE bot to track crypto wealth toward financial independence",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "LINE",
+    "bot",
+    "crypto",
+    "financial",
+    "retirement"
+  ],
+  "author": "linziyang-snail",
+  "license": "MIT",
   "dependencies": {
     "@line/bot-sdk": "^9.9.0",
     "axios": "^1.9.0",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "fs": "^0.0.1-security"
+    "express": "^5.1.0"
   }
 }
