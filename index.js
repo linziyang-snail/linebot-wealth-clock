@@ -1,9 +1,9 @@
 const express = require('express');
-const line = require('@line/bot-sdk');
 const dotenv = require('dotenv');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const line = require('@line/bot-sdk');
 
 dotenv.config();
 
@@ -14,8 +14,9 @@ const config = {
 
 const client = new line.Client(config);
 const app = express();
-app.use(express.json());
+
 app.use(line.middleware(config));
+app.use(express.json());
 
 const DATA_FILE = path.join(__dirname, 'userData.json');
 
@@ -46,72 +47,71 @@ app.post('/webhook', async (req, res) => {
     const userData = loadUserData();
 
     for (const event of events) {
-        if (event.type !== 'message' || event.message.type !== 'text') continue;
+        try {
+            if (event.type !== 'message' || event.message.type !== 'text') continue;
+            const userId = event.source.userId;
+            const msg = event.message.text.trim();
+            const [cmd, symbol, amount] = msg.split(' ');
+            userData[userId] = userData[userId] || { goal: 0, assets: {} };
 
-        const userId = event.source.userId;
-        const msg = event.message.text.trim();
-        const [cmd, symbol, amount] = msg.split(' ');
+            if (cmd === '/add' && symbol && amount) {
+                userData[userId].assets[symbol.toLowerCase()] = parseFloat(amount);
+                saveUserData(userData);
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: `✅ 已新增 ${symbol.toUpperCase()} 數量：${amount}`,
+                });
+            } else if (cmd === '/setgoal' && symbol) {
+                userData[userId].goal = parseInt(symbol);
+                saveUserData(userData);
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: `🎯 已設定財富目標為：${symbol} 元`,
+                });
+            } else if (cmd === '/status') {
+                const assets = userData[userId].assets;
+                const symbols = Object.keys(assets);
+                const ids = symbols.map(cryptoSymbolToId).filter(Boolean);
+                const prices = await getCryptoPrices(ids);
 
-        userData[userId] = userData[userId] || { goal: 0, assets: {} };
+                let totalUSD = 0;
+                let detail = '';
 
-        if (cmd === '/add' && symbol && amount) {
-            userData[userId].assets[symbol.toLowerCase()] = parseFloat(amount);
-            saveUserData(userData);
-            await client.replyMessage(event.replyToken, {
-                type: 'text',
-                text: `✅ 已新增 ${symbol.toUpperCase()} 數量：${amount}`,
-            });
-        } else if (cmd === '/setgoal' && symbol) {
-            userData[userId].goal = parseInt(symbol);
-            saveUserData(userData);
-            await client.replyMessage(event.replyToken, {
-                type: 'text',
-                text: `🎯 已設定財富目標為：${symbol} 元`,
-            });
-        } else if (cmd === '/status') {
-            const assets = userData[userId].assets;
-            const symbols = Object.keys(assets);
-            const ids = symbols.map(cryptoSymbolToId).filter(Boolean);
-            const prices = await getCryptoPrices(ids);
+                for (const s of symbols) {
+                    const id = cryptoSymbolToId(s);
+                    if (!prices[id]) continue;
+                    const price = prices[id].usd;
+                    const value = price * assets[s];
+                    totalUSD += value;
+                    detail += `${s.toUpperCase()}：${assets[s]} 顆 x $${price} = $${value.toFixed(2)}\n`;
+                }
 
-            let totalUSD = 0;
-            let detail = '';
+                const totalTWD = totalUSD * 32;
+                const goal = userData[userId].goal || 0;
+                const percent = goal > 0 ? ((totalTWD / goal) * 100).toFixed(2) : 'N/A';
 
-            for (const s of symbols) {
-                const id = cryptoSymbolToId(s);
-                if (!prices[id]) continue;
-                const price = prices[id].usd;
-                const value = price * assets[s];
-                totalUSD += value;
-                detail += `${s.toUpperCase()}：${assets[s]} 顆 x $${price} = $${value.toFixed(2)}\n`;
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text:
+                        `📊 幣圈資產總覽：\n\n${detail}--------------------------\n` +
+                        `💰 資產總值：$${totalUSD.toFixed(2)}（約 NT$${totalTWD.toLocaleString()}）\n` +
+                        `🎯 目標進度：${percent}%`,
+                });
+            } else {
+                await client.replyMessage(event.replyToken, {
+                    type: 'text',
+                    text: `📘 指令說明：\n/add [幣種] [數量]\n/setgoal [金額]\n/status 查詢資產狀況`,
+                });
             }
-
-            const totalTWD = totalUSD * 32;
-            const goal = userData[userId].goal || 0;
-            const percent = goal > 0 ? ((totalTWD / goal) * 100).toFixed(2) : 'N/A';
-
-            const text =
-                `📊 幣圈資產總覽：\n\n` +
-                `${detail}--------------------------\n` +
-                `💰 資產總值：$${totalUSD.toFixed(2)}（約 NT$${totalTWD.toLocaleString()}）\n` +
-                `🎯 目標進度：${percent}%`;
-
-            await client.replyMessage(event.replyToken, {
-                type: 'text',
-                text,
-            });
-        } else {
-            await client.replyMessage(event.replyToken, {
-                type: 'text',
-                text: `📘 指令說明：\n/add [幣種] [數量]\n/setgoal [目標金額]\n/status 查看資產總值與進度`,
-            });
+        } catch (err) {
+            console.error('處理使用者訊息錯誤：', err);
         }
     }
 
-    res.sendStatus(200);
+    res.sendStatus(200); // ✅ 一定要回傳 200 給 LINE
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`✅ LINE bot is running on port ${PORT}`);
+    console.log(`✅ LINE Bot is running on port ${PORT}`);
 });
