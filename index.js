@@ -1,14 +1,21 @@
 const express = require('express');
+const line = require('@line/bot-sdk');
 const dotenv = require('dotenv');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { MessagingApiClient, WebhookRequestHandler } = require('@line/bot-sdk-openapi');
 
 dotenv.config();
 
+const config = {
+    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+    channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+
+const client = new line.Client(config);
 const app = express();
 app.use(express.json());
+app.use(line.middleware(config));
 
 const DATA_FILE = path.join(__dirname, 'userData.json');
 
@@ -21,6 +28,11 @@ function saveUserData(data) {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
+function cryptoSymbolToId(symbol) {
+    const map = { btc: 'bitcoin', eth: 'ethereum', usdt: 'tether' };
+    return map[symbol.toLowerCase()] || null;
+}
+
 async function getCryptoPrices(symbols = []) {
     const ids = symbols.join('%2C');
     const response = await axios.get(
@@ -29,40 +41,32 @@ async function getCryptoPrices(symbols = []) {
     return response.data;
 }
 
-function cryptoSymbolToId(symbol) {
-    const map = { btc: 'bitcoin', eth: 'ethereum', usdt: 'tether' };
-    return map[symbol.toLowerCase()] || null;
-}
+app.post('/webhook', async (req, res) => {
+    const events = req.body.events;
+    const userData = loadUserData();
 
-const client = new MessagingApiClient({
-    accessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-});
-
-const handler = new WebhookRequestHandler({
-    channelSecret: process.env.LINE_CHANNEL_SECRET,
-    onMessage: async (event) => {
-        if (event.message.type !== 'text') return;
+    for (const event of events) {
+        if (event.type !== 'message' || event.message.type !== 'text') continue;
 
         const userId = event.source.userId;
         const msg = event.message.text.trim();
         const [cmd, symbol, amount] = msg.split(' ');
 
-        const userData = loadUserData();
         userData[userId] = userData[userId] || { goal: 0, assets: {} };
 
         if (cmd === '/add' && symbol && amount) {
             userData[userId].assets[symbol.toLowerCase()] = parseFloat(amount);
             saveUserData(userData);
-            await client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [{ type: 'text', text: `✅ 已新增 ${symbol.toUpperCase()} 數量：${amount}` }],
+            await client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: `✅ 已新增 ${symbol.toUpperCase()} 數量：${amount}`,
             });
         } else if (cmd === '/setgoal' && symbol) {
             userData[userId].goal = parseInt(symbol);
             saveUserData(userData);
-            await client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [{ type: 'text', text: `🎯 已設定財富目標為：${symbol} 元` }],
+            await client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: `🎯 已設定財富目標為：${symbol} 元`,
             });
         } else if (cmd === '/status') {
             const assets = userData[userId].assets;
@@ -92,25 +96,20 @@ const handler = new WebhookRequestHandler({
                 `💰 資產總值：$${totalUSD.toFixed(2)}（約 NT$${totalTWD.toLocaleString()}）\n` +
                 `🎯 目標進度：${percent}%`;
 
-            await client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [{ type: 'text', text }],
+            await client.replyMessage(event.replyToken, {
+                type: 'text',
+                text,
             });
         } else {
-            await client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [
-                    {
-                        type: 'text',
-                        text: `📘 指令說明：\n/add [幣種] [數量]\n/setgoal [目標金額]\n/status 查看資產總值與進度`,
-                    },
-                ],
+            await client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: `📘 指令說明：\n/add [幣種] [數量]\n/setgoal [目標金額]\n/status 查看資產總值與進度`,
             });
         }
-    },
-});
+    }
 
-app.post('/webhook', handler); // handler 是 Express middleware
+    res.sendStatus(200);
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
