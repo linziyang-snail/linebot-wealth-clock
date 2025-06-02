@@ -36,10 +36,18 @@ function cryptoSymbolToId(symbol) {
 
 async function getCryptoPrices(symbols = []) {
     const ids = symbols.join('%2C');
-    const response = await axios.get(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`
-    );
-    return response.data;
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`;
+    try {
+        const response = await axios.get(url);
+        return response.data;
+    } catch (error) {
+        if (error.response?.status === 429) {
+            console.warn('⚠️ 已達到 CoinGecko API 呼叫限制，請稍後再試');
+            return { error: 'RATE_LIMIT' };
+        }
+        console.error('❌ 幣價查詢失敗：', error.message);
+        return { error: 'API_ERROR' };
+    }
 }
 
 app.post('/webhook', async (req, res) => {
