@@ -1,61 +1,49 @@
-// 引入必要的模組
-const express = require('express'); // 用於建立 Express 應用程式
-const dotenv = require('dotenv');   // 用於讀取 .env 設定檔
-const axios = require('axios');     // 用於發送 HTTP 請求（呼叫 CoinGecko API）
-const fs = require('fs');           // 用於檔案讀取與寫入
-const path = require('path');       // 處理檔案路徑
-const line = require('@line/bot-sdk'); // LINE Messaging API SDK
+const express = require('express');
+const dotenv = require('dotenv');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const line = require('@line/bot-sdk');
 
-// 載入環境變數
 dotenv.config();
 
-// 設定 LINE Bot 的存取金鑰與密鑰（需從 .env 讀取）
 const config = {
     channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
     channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-// 初始化 LINE Bot 客戶端
 const client = new line.Client(config);
-
-// 建立 Express 應用
 const app = express();
 
-// 啟用 LINE webhook middleware 以解析來自 LINE 的請求
 app.use(line.middleware(config));
-// 啟用 JSON 解析（處理其他非 LINE 請求）
 app.use(express.json());
 
-// 定義儲存用戶資料的 JSON 檔案位置
 const DATA_FILE = path.join(__dirname, 'userData.json');
 
-// 讀取本地儲存的用戶資料（若檔案不存在則回傳空物件）
+// 讀取使用者資料
 function loadUserData() {
     if (!fs.existsSync(DATA_FILE)) return {};
     return JSON.parse(fs.readFileSync(DATA_FILE));
 }
 
-// 將用戶資料寫入本地 JSON 檔案（做簡單的資料持久化）
+// 儲存使用者資料
 function saveUserData(data) {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// 幣種代碼對應 CoinGecko API 所需的 ID
-function cryptoSymbolToId(symbol) {
-    const map = { btc: 'bitcoin', eth: 'ethereum', usdt: 'tether' };
-    return map[symbol.toLowerCase()] || null;
-}
-
-// 取得加密貨幣幣價（改為使用 Binance API，對 USDT 報價）
+// 使用 Binance 批次查詢幣價
 async function getCryptoPrices(symbols = []) {
-    const result = {};
     try {
+        const response = await axios.get('https://api.binance.com/api/v3/ticker/price');
+        const prices = response.data;
+
+        const result = {};
         for (const symbol of symbols) {
-            const upperSymbol = symbol.toUpperCase();
-            const pair = `${upperSymbol}USDT`; // 組成 Binance 的交易對
-            const response = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`);
-            const price = parseFloat(response.data.price);
-            result[symbol] = { usd: price }; // 模擬 CoinGecko 的格式：{ btc: { usd: 68294 } }
+            const pair = `${symbol.toUpperCase()}USDT`;
+            const match = prices.find(p => p.symbol === pair);
+            if (match) {
+                result[symbol.toLowerCase()] = { usd: parseFloat(match.price) };
+            }
         }
         return result;
     } catch (error) {
@@ -64,24 +52,21 @@ async function getCryptoPrices(symbols = []) {
     }
 }
 
-// 接收來自 LINE 的 webhook 請求
+// 接收 Webhook 請求
 app.post('/webhook', async (req, res) => {
-    const events = req.body.events;          // LINE 傳來的事件陣列
-    const userData = loadUserData();         // 載入用戶資料
+    const events = req.body.events;
+    const userData = loadUserData();
 
     for (const event of events) {
         try {
-            // 僅處理文字訊息事件，忽略貼圖、圖片等
             if (event.type !== 'message' || event.message.type !== 'text') continue;
 
-            const userId = event.source.userId;     // 使用者 ID（作為儲存 key）
-            const msg = event.message.text.trim();  // 使用者輸入文字
-            const [cmd, symbol, amount] = msg.split(' '); // 拆解指令參數
-            userData[userId] = userData[userId] || { goal: 0, assets: {} }; // 若該用戶為首次使用，初始化其資料
+            const userId = event.source.userId;
+            const msg = event.message.text.trim();
+            const [cmd, symbol, amount] = msg.split(' ');
+            userData[userId] = userData[userId] || { goal: 0, assets: {} };
 
-            // 處理 /add 指令：記錄幣種與數量
             if (cmd === '/add') {
-                // 檢查輸入格式是否正確
                 if (!symbol || isNaN(parseFloat(amount))) {
                     await client.replyMessage(event.replyToken, {
                         type: 'text',
@@ -90,7 +75,6 @@ app.post('/webhook', async (req, res) => {
                     continue;
                 }
 
-                // 儲存使用者輸入的幣種與數量
                 userData[userId].assets[symbol.toLowerCase()] = parseFloat(amount);
                 saveUserData(userData);
 
@@ -99,7 +83,6 @@ app.post('/webhook', async (req, res) => {
                     text: `✅ 已新增 ${symbol.toUpperCase()} 數量：${amount}`,
                 });
 
-                // 處理 /setgoal 指令：設定財富目標金額
             } else if (cmd === '/setgoal') {
                 if (isNaN(parseInt(symbol))) {
                     await client.replyMessage(event.replyToken, {
@@ -117,11 +100,8 @@ app.post('/webhook', async (req, res) => {
                     text: `🎯 已設定財富目標為：${symbol} 元`,
                 });
 
-                // 處理 /status 指令：顯示目前資產狀況與目標達成率
             } else if (cmd === '/status') {
                 const assets = userData[userId].assets;
-
-                // 沒有任何資產記錄
                 if (!assets || Object.keys(assets).length === 0) {
                     await client.replyMessage(event.replyToken, {
                         type: 'text',
@@ -130,50 +110,33 @@ app.post('/webhook', async (req, res) => {
                     continue;
                 }
 
-                // 取得所有已記錄幣種，轉換成 CoinGecko 所需 ID
                 const symbols = Object.keys(assets);
-                const ids = symbols.map(cryptoSymbolToId).filter(Boolean);
+                const prices = await getCryptoPrices(symbols);
 
-                // 若有無法識別的幣種，回傳錯誤
-                if (ids.length === 0) {
+                if (prices.error === 'API_ERROR') {
                     await client.replyMessage(event.replyToken, {
                         type: 'text',
-                        text: `⚠️ 無法解析幣種，請使用正確代碼（如 btc、eth）`,
+                        text: `⚠️ 幣價查詢失敗，請稍後再試`,
                     });
                     continue;
                 }
 
-                // 查詢目前幣價
-                const prices = await getCryptoPrices(ids);
-
-                // 若 CoinGecko 返回限流錯誤
-                if (prices.error === 'RATE_LIMIT') {
-                    await client.replyMessage(event.replyToken, {
-                        type: 'text',
-                        text: `⚠️ 查詢太頻繁，請稍後再試（CoinGecko 限制）`,
-                    });
-                    continue;
-                }
-
-                // 計算總資產（USD）
                 let totalUSD = 0;
                 let detail = '';
 
                 for (const s of symbols) {
-                    const id = cryptoSymbolToId(s);
-                    if (!prices[id]) continue; // 若該幣種查不到價格則略過
-                    const price = prices[id].usd;
+                    const priceData = prices[s.toLowerCase()];
+                    if (!priceData) continue;
+                    const price = priceData.usd;
                     const value = price * assets[s];
                     totalUSD += value;
                     detail += `${s.toUpperCase()}：${assets[s]} 顆 x $${price} = $${value.toFixed(2)}\n`;
                 }
 
-                // 將 USD 轉換為 TWD（此處寫死匯率為 32）
                 const totalTWD = totalUSD * 32;
                 const goal = userData[userId].goal || 0;
                 const percent = goal > 0 ? ((totalTWD / goal) * 100).toFixed(2) : 'N/A';
 
-                // 回傳統計資料給使用者
                 await client.replyMessage(event.replyToken, {
                     type: 'text',
                     text:
@@ -182,7 +145,6 @@ app.post('/webhook', async (req, res) => {
                         `🎯 目標進度：${percent}%`,
                 });
 
-                // 所有未知指令皆回傳使用教學
             } else {
                 await client.replyMessage(event.replyToken, {
                     type: 'text',
@@ -191,16 +153,18 @@ app.post('/webhook', async (req, res) => {
             }
 
         } catch (err) {
-            // 捕捉錯誤但僅印出 log（建議可加上通知開發者的 webhook 通知）
             console.error('處理使用者訊息錯誤：', err);
+            await client.replyMessage(event.replyToken, {
+                type: 'text',
+                text: `❌ 發生錯誤，請稍後再試`,
+            });
         }
     }
 
-    // 一定要對 LINE 回傳 HTTP 200，否則會認為 webhook 無效
     res.sendStatus(200);
 });
 
-// 啟動伺服器，預設 port 為 3000（可被 Render、Heroku 等平台覆蓋）
+// 啟動伺服器
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`✅ LINE Bot is running on port ${PORT}`);
