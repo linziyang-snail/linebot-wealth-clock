@@ -46,21 +46,20 @@ function cryptoSymbolToId(symbol) {
     return map[symbol.toLowerCase()] || null;
 }
 
-// 呼叫 CoinGecko API 取得指定幣種的即時價格（對 USD）
+// 取得加密貨幣幣價（改為使用 Binance API，對 USDT 報價）
 async function getCryptoPrices(symbols = []) {
-    const ids = symbols.join('%2C'); // 以逗號連接多個幣種 ID
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`;
+    const result = {};
     try {
-        const response = await axios.get(url);
-        return response.data;
-    } catch (error) {
-        // 若 API 回應 429，代表過度呼叫，需限制
-        if (error.response?.status === 429) {
-            console.warn('⚠️ 已達到 CoinGecko API 呼叫限制，請稍後再試');
-            return { error: 'RATE_LIMIT' };
+        for (const symbol of symbols) {
+            const upperSymbol = symbol.toUpperCase();
+            const pair = `${upperSymbol}USDT`; // 組成 Binance 的交易對
+            const response = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`);
+            const price = parseFloat(response.data.price);
+            result[symbol] = { usd: price }; // 模擬 CoinGecko 的格式：{ btc: { usd: 68294 } }
         }
-        // 其他錯誤顯示錯誤訊息
-        console.error('❌ 幣價查詢失敗：', error.message);
+        return result;
+    } catch (error) {
+        console.error('❌ Binance 幣價查詢失敗：', error.message);
         return { error: 'API_ERROR' };
     }
 }
