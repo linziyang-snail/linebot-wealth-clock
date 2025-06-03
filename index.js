@@ -34,7 +34,7 @@ function saveUserData(data) {
 // 使用 Binance 批次查詢幣價
 async function getCryptoPrices(symbols = []) {
     try {
-        const response = await axios.get('https://api.binance.com/api/v3/ticker/price');
+        const response = await axios.get('https://api1.binance.com/api/v3/ticker/price');
         const prices = response.data;
 
         const result = {};
