@@ -62,25 +62,68 @@ app.post('/webhook', async (req, res) => {
             const [cmd, symbol, amount] = msg.split(' ');
             userData[userId] = userData[userId] || { goal: 0, assets: {} };
 
-            if (cmd === '/add' && symbol && amount) {
+            if (cmd === '/add') {
+                if (!symbol || isNaN(parseFloat(amount))) {
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text: `⚠️ 格式錯誤，請使用：/add 幣種 數量\n例如：/add btc 0.5`,
+                    });
+                    continue;
+                }
+
                 userData[userId].assets[symbol.toLowerCase()] = parseFloat(amount);
                 saveUserData(userData);
+
                 await client.replyMessage(event.replyToken, {
                     type: 'text',
                     text: `✅ 已新增 ${symbol.toUpperCase()} 數量：${amount}`,
                 });
-            } else if (cmd === '/setgoal' && symbol) {
+
+            } else if (cmd === '/setgoal') {
+                if (isNaN(parseInt(symbol))) {
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text: `⚠️ 格式錯誤，請使用：/setgoal 金額\n例如：/setgoal 1000000`,
+                    });
+                    continue;
+                }
+
                 userData[userId].goal = parseInt(symbol);
                 saveUserData(userData);
+
                 await client.replyMessage(event.replyToken, {
                     type: 'text',
                     text: `🎯 已設定財富目標為：${symbol} 元`,
                 });
+
             } else if (cmd === '/status') {
                 const assets = userData[userId].assets;
+                if (!assets || Object.keys(assets).length === 0) {
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text: `📭 尚未新增任何幣種資產，請使用 /add 開始記錄！`,
+                    });
+                    continue;
+                }
+
                 const symbols = Object.keys(assets);
                 const ids = symbols.map(cryptoSymbolToId).filter(Boolean);
+                if (ids.length === 0) {
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text: `⚠️ 無法解析幣種，請使用正確代碼（如 btc、eth）`,
+                    });
+                    continue;
+                }
+
                 const prices = await getCryptoPrices(ids);
+                if (prices.error === 'RATE_LIMIT') {
+                    await client.replyMessage(event.replyToken, {
+                        type: 'text',
+                        text: `⚠️ 查詢太頻繁，請稍後再試（CoinGecko 限制）`,
+                    });
+                    continue;
+                }
 
                 let totalUSD = 0;
                 let detail = '';
@@ -105,6 +148,7 @@ app.post('/webhook', async (req, res) => {
                         `💰 資產總值：$${totalUSD.toFixed(2)}（約 NT$${totalTWD.toLocaleString()}）\n` +
                         `🎯 目標進度：${percent}%`,
                 });
+
             } else {
                 await client.replyMessage(event.replyToken, {
                     type: 'text',
